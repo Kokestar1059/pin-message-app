@@ -1,0 +1,19 @@
+#!/bin/sh
+# 秘密情報の混入をコミット前に検知する。
+# 有効化（clone 後に一度だけ）: git config core.hooksPath .githooks
+#
+# gitleaks がステージ済みの変更をスキャンし、秘密を検知したらコミットを中止する。
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --staged --redact --no-banner
+  if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ gitleaks: 秘密情報の混入が疑われます。コミットを中止しました。"
+    echo "   - 本物のキーなら .env へ移し、コミット対象から外してください。"
+    echo "   - 誤検知なら .gitleaks.toml の allowlist で除外してください。"
+    exit 1
+  fi
+else
+  echo "⚠️  gitleaks 未インストールのため秘密スキャンをスキップしました（推奨: brew install gitleaks）。"
+fi
+exit 0
