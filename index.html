@@ -7,6 +7,32 @@
   </head>
   <body>
     <div id="map"></div>
+
+    <!-- 投稿フォームのモーダル。既定は hidden 属性で非表示。
+         ロジック側（main.js）が hidden を付け外しして開閉する。視覚層はここまで。 -->
+    <div id="post-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="post-modal-title">
+      <div class="modal__overlay"></div>
+      <div class="modal__card" role="document">
+        <h2 id="post-modal-title" class="modal__title">ここにメッセージを置く</h2>
+        <p class="modal__lead">この場所に行った人だけが開けるひとことを残せます。</p>
+
+        <div class="field">
+          <label class="field__label" for="post-name">なまえ</label>
+          <input id="post-name" class="field__input" type="text" placeholder="例：こうき" autocomplete="off" />
+        </div>
+
+        <div class="field">
+          <label class="field__label" for="post-text">メッセージ</label>
+          <textarea id="post-text" class="field__input field__textarea" rows="3" placeholder="ここでひとこと…"></textarea>
+        </div>
+
+        <div class="modal__actions">
+          <button id="post-cancel" class="btn btn--ghost" type="button">キャンセル</button>
+          <button id="post-submit" class="btn btn--primary" type="button">ここに置く</button>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

@@ -40,14 +40,75 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 // （この仮マーカーは「これから置く場所」のプレビュー。保存＝INSERT は #9 で行う。）
 let tempMarker = null
 
-map.on('click', (e) => {
-  // クリック地点の緯度経度。Leaflet が e.latlng = { lat, lng } で渡してくれる。
-  const { lat, lng } = e.latlng
-  console.log('クリック地点:', lat, lng)
+// --- #8 投稿モーダル ---
+// 見た目は ui-designer が index.html / style.css に用意済み。ここでは DOM 契約（ID）に従って
+// 要素を掴み、開閉と後始末のロジックだけを書く。開閉は #post-modal の hidden 属性で行う約束。
+const modal = document.getElementById('post-modal')
+const overlay = modal.querySelector('.modal__overlay')
+const nameInput = document.getElementById('post-name')
+const textInput = document.getElementById('post-text')
+const submitBtn = document.getElementById('post-submit')
+const cancelBtn = document.getElementById('post-cancel')
 
+function openModal() {
+  modal.hidden = false
+  nameInput.focus() // すぐ打てるように名前欄へフォーカス
+}
+
+function closeModal() {
+  modal.hidden = true
+}
+
+// 仮ピンを地図から消して参照も捨てる（後始末の中核）。
+function removeTempMarker() {
+  if (tempMarker) {
+    tempMarker.remove()
+    tempMarker = null
+  }
+}
+
+// 投稿をやめたときの後始末: モーダルを閉じ、仮ピンを消し、入力欄もクリアする。
+function cancelPost() {
+  closeModal()
+  removeTempMarker()
+  nameInput.value = ''
+  textInput.value = ''
+}
+
+map.on('click', (e) => {
+  // クリック地点に仮ピンを置き（移動 or 新規）、続けて投稿モーダルを開く。
   if (tempMarker) {
     tempMarker.setLatLng(e.latlng) // 既存の仮マーカーを移動（1個を保つ）
   } else {
     tempMarker = L.marker(e.latlng).addTo(map) // 初回だけ新規作成
   }
+  openModal()
+})
+
+// キャンセル／オーバーレイ（カード外の暗い部分）クリックで投稿を取りやめる。
+cancelBtn.addEventListener('click', cancelPost)
+overlay.addEventListener('click', cancelPost)
+
+// Esc キーでも閉じる。モーダルは aria-modal を名乗っているので、キーボードでも閉じられる
+// 状態に揃える（開いているときだけ反応させる）。
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !modal.hidden) cancelPost()
+})
+
+// 「ここに置く」ボタン。#8 では入力値が取れることまで確認する（保存＝INSERT は #9）。
+submitBtn.addEventListener('click', () => {
+  // 仮ピン無しでこのボタンが押される経路は現状ないが、将来の改修に備えた防御。
+  if (!tempMarker) return
+
+  const userName = nameInput.value.trim()
+  const text = textInput.value.trim()
+  // 名前・メッセージが空なら何もしない（最小ガード。UI での明示は #16 で調整）。
+  if (!userName || !text) return
+
+  // 仮ピンの座標が、これから保存するメッセージの場所になる。
+  const { lat, lng } = tempMarker.getLatLng()
+  console.log('置く:', { userName, text, lat, lng }) // #9: ここで supabase へ INSERT する
+
+  // #8 はまだ保存しないので、確認後はキャンセルと同じく後始末する（#9 で挙動を差し替える）。
+  cancelPost()
 })
