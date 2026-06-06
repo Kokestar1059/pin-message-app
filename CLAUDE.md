@@ -169,8 +169,25 @@ create policy "anon can insert" on messages for insert to anon with check (true)
 
 ---
 
-## 13. タスク管理（GitHub Issue）
+## 13. タスク管理と作業の進め方（GitHub Issue）
 
-- 仕様書 §9 のビルド順（土台 → 地図 → 投稿 → 表示と同期 → GPS とロック → 仕上げ+デプロイ → 実地テスト）を Issue 化して進める。
-- ラベル方針: `setup` / `feature` / `bug` / `deploy` / `v2` / `chore`。
-- 1 Issue = 1 まとまった作業。完了したら close。決定や詰まりはコメントに記録する。
+タスクは GitHub Issue で管理する。**3層**で整理する:
+
+- **Milestone** = phase（能力レイヤー）。例: `Phase 1 — 基盤` / `Phase 2 — 地図` … 進捗バーでフェーズの達成度が見える。
+- **Issue** = 個々の機能・タスク（1 Issue = 1 レビュー単位）。本文に**実装チェックリスト**を持ち、進めながらチェックする。
+- **Label** = 種類タグ: `setup` / `feature` / `bug` / `deploy` / `v2` / `chore`。
+
+### セッション再開で「現在地」を把握する
+
+**1 Issue ＝ おおむね 1 作業セッション**。セッション開始時は次の3つを読めば現在地が分かる状態を保つ:
+
+1. **CLAUDE.md**（これ）… プロジェクトの確定事項とルール
+2. **対象 Issue** … 今やること＋チェックリストの消化状況
+3. **git log** … これまで何を実装したか
+
+この property を成立させるため、以下を守る:
+
+- **コミットメッセージに Issue 番号を入れる**（例: `feat: 地図クリックで座標取得 (#7)`、完了時は本文に `Closes #7`）。
+- 作業を進めたら**対象 Issue のチェックリストを更新**する。詰まり・決定はコメントに残す。
+- Issue が完了したら close（コミット/PR 本文の `Closes #n` で自動 close できる）。
+- 恒久ルールになった決定は CLAUDE.md へ昇格を提案する（§12）。
