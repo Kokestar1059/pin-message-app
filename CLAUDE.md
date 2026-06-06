@@ -191,3 +191,21 @@ create policy "anon can insert" on messages for insert to anon with check (true)
 - 作業を進めたら**対象 Issue のチェックリストを更新**する。詰まり・決定はコメントに残す。
 - Issue が完了したら close（コミット/PR 本文の `Closes #n` で自動 close できる）。
 - 恒久ルールになった決定は CLAUDE.md へ昇格を提案する（§12）。
+
+---
+
+## 14. サブエージェントの役割と権限
+
+並列作業用に [.claude/agents/](.claude/agents/) に2つのサブエージェントを置く。**権限は役割に従う**（Producer は書ける／Critic は読むだけ）。各エージェントは独立コンテキストで動き、オーケストレーターの会話は引き継がない。
+
+| 役割 | 権限 | 担当 | 触らない |
+|------|------|------|----------|
+| **オーケストレーター**（このセッション） | 全権 | 統合・指揮。ロジック（JS）を own、順序付け、diff レビュー、コミット | — |
+| **ui-designer**（Producer） | **write 可** | 視覚層: CSS／表示用 HTML 構造／Leaflet・マーカー・モーダルの見た目／モバイル可読性 | ロジック（Supabase・Geolocation・距離計算・Realtime） |
+| **code-reviewer**（Critic） | **read-only** | 客観レビュー: 正しさ・矛盾・CLAUDE.md 違反・秘密混入・Non-Goal 逸脱 | コードの書き換え（指摘のみ） |
+
+運用ルール:
+- **ファイル分担で衝突を避ける**: ui-designer = 見た目ファイル（例 `style.css`・表示用マークアップ）／オーケストレーター = ロジックファイル（例 `main.js`）。**同一ファイルの同時編集はしない**。
+- **作業順序**: 実装/デザイン（書く）→ **code-reviewer（読むだけ）で検証** → 指摘を統合 → コミット（Issue 番号付き）。レビュアーは独立性のため実装に手を出さない。
+- どうしても同一ファイルを並列で書く必要が出たら、`Agent` の **worktree 分離**を使う。
+- `tools:` はツール種別でしか絞れない（パス単位の制限は不可）。「ロジックに触らない」は prompt＋diff レビュー＋code-reviewer で担保する。
