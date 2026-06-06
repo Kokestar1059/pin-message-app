@@ -6,3 +6,14 @@
 body {
   font-family: system-ui, sans-serif;
 }
+
+/* Leaflet は #map の高さを CSS から読んで地図を描く。高さ 0 だと地図が見えない（定番の落とし穴）。
+   画面いっぱいに地図を広げる。html/body にも高さを通さないと % が効かないので 100% を伝播させる。 */
+html,
+body {
+  height: 100%;
+}
+
+#map {
+  height: 100vh;
+}
