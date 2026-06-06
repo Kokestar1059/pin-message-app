@@ -12,6 +12,8 @@ import L from 'leaflet'
 import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
+// Supabase クライアント（src/supabase.js で1個だけ生成して使い回す）。投稿の保存に使う。
+import { supabase } from './supabase.js'
 
 // 公式定石: デフォルトアイコン（Icon.Default）の「画像URLだけ」を import した正しい URL に差し替える。
 // サイズ・アンカー等は Leaflet 既定値のままで良いので指定しない（mergeOptions は渡した分だけ上書き）。
@@ -95,8 +97,9 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !modal.hidden) cancelPost()
 })
 
-// 「ここに置く」ボタン。#8 では入力値が取れることまで確認する（保存＝INSERT は #9）。
-submitBtn.addEventListener('click', () => {
+// 「ここに置く」ボタン。入力内容を Supabase に保存する。
+// 骨格は「習ったチャットの保存」と同じで、座標 lat/lng を足しただけ（CLAUDE.md §5 原則2）。
+submitBtn.addEventListener('click', async () => {
   // 仮ピン無しでこのボタンが押される経路は現状ないが、将来の改修に備えた防御。
   if (!tempMarker) return
 
@@ -107,8 +110,23 @@ submitBtn.addEventListener('click', () => {
 
   // 仮ピンの座標が、これから保存するメッセージの場所になる。
   const { lat, lng } = tempMarker.getLatLng()
-  console.log('置く:', { userName, text, lat, lng }) // #9: ここで supabase へ INSERT する
 
-  // #8 はまだ保存しないので、確認後はキャンセルと同じく後始末する（#9 で挙動を差し替える）。
+  // 二重送信防止: 保存中はボタンを無効化する。
+  submitBtn.disabled = true
+  // INSERT。カラム名は §4 のデータモデルに合わせる（user_name は snake_case）。
+  // id / created_at は Postgres が自動付与するので渡さない。
+  const { error } = await supabase
+    .from('messages')
+    .insert({ user_name: userName, text, lat, lng })
+  submitBtn.disabled = false
+
+  if (error) {
+    // 失敗時はモーダルを開いたまま、やり直せるように知らせる（PoC は alert で最小限）。
+    console.error('保存に失敗:', error.message)
+    alert('保存に失敗しました。通信状況を確認してもう一度お試しください。')
+    return
+  }
+
+  // 成功時のみ後始末。保存済みピンが地図に出るのは #10（SELECT 描画）/ #11（Realtime）。
   cancelPost()
 })
