@@ -131,7 +131,18 @@ create policy "anon can insert" on messages for insert to anon with check (true)
 
 ## 9. ディレクトリ構成
 
-> scaffold 後に確定したら追記する。
+```
+pin-message-app/
+├── index.html        # エントリ（#app と main.js を読む）
+├── package.json      # vite 依存 + dev/build/preview スクリプト
+├── src/
+│   ├── main.js       # アプリのエントリ JS（Phase 2 で地図を描画）
+│   └── style.css     # スタイル（ui-designer が own）
+├── public/           # 静的配信（現状なし。必要になったら作る）
+└── dist/             # build 出力（gitignore 済み）
+```
+
+> Phase が進んだら（地図・距離計算などのモジュール分割が起きたら）追記する。
 
 ---
 
