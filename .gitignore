@@ -23,3 +23,6 @@ pnpm-debug.log*
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Claude Code ─ 個人ローカル設定は共有しない（サブエージェント定義 .claude/agents/ は共有する）
+.claude/settings.local.json
