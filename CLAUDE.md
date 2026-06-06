@@ -209,3 +209,42 @@ create policy "anon can insert" on messages for insert to anon with check (true)
 - **作業順序**: 実装/デザイン（書く）→ **code-reviewer（読むだけ）で検証** → 指摘を統合 → コミット（Issue 番号付き）。レビュアーは独立性のため実装に手を出さない。
 - どうしても同一ファイルを並列で書く必要が出たら、`Agent` の **worktree 分離**を使う。
 - `tools:` はツール種別でしか絞れない（パス単位の制限は不可）。「ロジックに触らない」は prompt＋diff レビュー＋code-reviewer で担保する。
+
+---
+
+## 15. ブランチ運用とマージ（PR デフォルト・軽量）
+
+**`main` は常に「動く状態」を保つ。** Issue ごとに feature ブランチを切って作業し、PR で `main` に取り込む。PR は「人間の承認ゲート」ではなく **①レビュアーエージェントの検証面 ②学習の記録 ③CI ゲート** として使う（だから軽量に回す）。
+
+### 基本フロー（1 Issue = 1 ブランチ = 1 PR）
+
+```sh
+git switch main && git pull                 # 1. main を最新化
+git switch -c feat/7-map-click-coords        # 2. ブランチを切る（命名規則は下記）
+# … 実装（小さくコミット。メッセージに Issue 番号）…
+git commit -m "feat: 地図クリックで座標取得 (#7)"
+npm run build                                # 3. テスト（下記の定義）
+# 4. push → PR 作成（gh は私が回す）。PR 本文に Closes #7
+gh pr create --fill --base main
+# 5. レビュー（code-reviewer / 自分）→ 指摘反映
+gh pr merge --squash --delete-branch         # 6. squash マージ（Issue 自動 close、ブランチ削除）
+```
+
+### 命名規則
+
+`<type>/<issue番号>-<短いslug>`。`type` は Issue のラベルに対応: `feat` / `fix` / `chore` / `deploy` / `setup` / `docs`。
+例: `feat/7-map-click-coords`、`setup/1-vite-scaffold`。Issue が無い作業は番号を省く（例 `docs/branching-workflow`）。
+
+### 「テスト」の定義（テスト framework はまだ無い）
+
+1. `npm run build` が通る
+2. Issue の「完了の定義」を満たす手動確認
+3. **code-reviewer（read-only）でブロッカーなし**
+
+### 基準・例外
+
+- **`main` で直接作業しない**（土台構築の初期コミットだけは例外的に `main` 済み）。
+- **コード変更は PR**。**ダッシュボード操作だけの雑務 Issue**（例: Realtime publication 有効化、RLS ポリシー作成）はコミットを伴わないので **PR 不要** — Issue のチェックリストを更新して close すればよい。
+- 自然に1単位の小さな関連 Issue は、1ブランチ/PR にまとめてよい（PR 本文に `Closes #a, #b`）。
+- **squash マージ**で `main` は「1 Issue = 1 コミット」の直線史に保つ。
+- 本質はこの4つ: ①`main` で直接作業しない ②`main` は常に動く ③Issue に紐づく atomic な単位 ④辿れる。
