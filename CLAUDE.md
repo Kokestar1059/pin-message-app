@@ -8,7 +8,7 @@
 ## 1. このプロジェクトは何か
 
 特定の場所にテキストメッセージを「置いて」おき、**その場所に物理的に行った人だけが開ける**ウェブアプリ。
-位置情報メッセージ／デジタル宝探しのジャンル。2人（自分とパートナー）で使う **PoC**。
+位置情報メッセージ／デジタル宝探しのジャンル。2人（自分とパートナー）で使う **PoC**（仮本番運用・複数端末利用を見据える）。
 
 体験のコア:
 - 投稿者は地図上の任意の場所にピンを立て、ひとことメッセージを添えて置く。
@@ -19,9 +19,11 @@
 
 ## 2. スコープと Non-Goals
 
-2人・**認証なし**の PoC。以下は**勝手に作らない**（必要だと思ったら必ず提案して確認を取る）:
+2人で使う PoC。**認証は Google OAuth でスコープ内**（投稿の所有＝編集/削除を本人に限るため。Phase 7。経緯は #29-31）。
+以下は**勝手に作らない**（必要だと思ったら必ず提案して確認を取る）:
 
-- ユーザー認証・ログイン・サインアップ
+- ~~ユーザー認証・ログイン・サインアップ~~ → **方針変更でスコープ内に**（Supabase Auth + Google OAuth。§3）
+- 認証は Google OAuth **のみ**（メール/パスワード・他プロバイダ・サインアップ画面は作らない）
 - 「一度開けたら永久に読める」永続化（v2 で localStorage を想定）
 - サーバ側での距離判定 / PostGIS（v2 候補）
 - React 化（v2）
@@ -36,7 +38,8 @@
 |------|------|
 | 言語/構成 | **vanilla JS（ES モジュール）+ Vite**。React は v2 に回す |
 | 地図 | **Leaflet + OpenStreetMap**（API キー・課金・カード登録なしで完全無料） |
-| BaaS | **Supabase（Postgres + Realtime）**、`@supabase/supabase-js` |
+| BaaS | **Supabase（Postgres + Realtime + Auth）**、`@supabase/supabase-js` |
+| 認証 | **Supabase Auth + Google OAuth**（`signInWithOAuth({ provider: 'google' })`）。新依存ではなく既存 Supabase の機能 |
 | ホスティング | **public リポジトリ + GitHub Pages**（HTTPS。Geolocation 要件を満たす） |
 
 **ルール:**
@@ -54,13 +57,15 @@
 | カラム | 型 | 備考 |
 |--------|------|------|
 | `id` | `uuid` default `gen_random_uuid()` | 主キー |
-| `user_name` | `text` | 投稿者名 |
+| `user_id` | `uuid` references `auth.users` default `auth.uid()` | 投稿者（所有判定の基準。RLS の update/delete はこれが本人のときだけ許可） |
+| `user_name` | `text` | 表示名。**Google プロフィール名**を投稿時に入れる（手入力の名前欄は廃止。#31） |
 | `text` | `text` | ひとことメッセージ |
 | `lat` | `float8` | ピンの緯度（地図クリックで取得） |
 | `lng` | `float8` | ピンの経度 |
 | `created_at` | `timestamptz` default `now()` | Postgres が自動付与 |
 
 **ロックの開閉状態はこのテーブルに持たせない**（§5 原則1）。
+**所有（誰の投稿か）は `user_id` で持つ**。編集/削除を本人に限る制御は §6 のオーナーベース RLS で行う。
 
 ---
 
@@ -84,8 +89,11 @@
   `THRESHOLD` は **30〜50m から開始**（GPS 誤差 5〜20m を吸収。**現地で調整する前提の暫定値**）。
 - **Supabase Realtime + RLS（最大の落とし穴）**:
   - 購読: `supabase.channel(...).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, cb).subscribe()`
-  - 対象テーブルを **Realtime publication に追加**（ダッシュボードで有効化）する。
-  - **RLS を有効化** + anon ロールに SELECT/INSERT を許す緩いポリシー（PoC 用。本番では絞る）。
+  - 対象テーブルを **Realtime publication に追加**（ダッシュボードで有効化）する。**INSERT だけでなく
+    UPDATE / DELETE も購読する**（編集/削除を相手の画面に反映するため。#33/#34）。DELETE の payload は
+    既定で `payload.old` に主キーのみ → `payload.old.id` でマーカーを引く。
+  - **RLS をオーナーベースに**: select は全員可（ピンは常に見える）／insert・update・delete は
+    `auth.uid() = user_id` の本人のみ（§下の SQL）。**所有はサーバ側で強制**される。
   - **Realtime は RLS に従う**。SELECT ポリシーが届けたい行をカバーしないとリアルタイムが飛んでこない
     （「INSERT は成功するのに相手の画面に出ない」症状の主因）。
 - **Supabase キー**: **publishable キー（`sb_publishable_...`）を使う**（レガシー anon キーではなく推奨の新方式。
@@ -98,12 +106,22 @@
   )
   ```
 
-PoC 用 RLS ポリシー（参考）:
+オーナーベース RLS（参考。認証導入後＝#31 の形）:
 ```sql
 alter table messages enable row level security;
-create policy "anon can read"   on messages for select to anon using (true);
-create policy "anon can insert" on messages for insert to anon with check (true);
+-- ピンは常に見える: 読み取りは全員可
+create policy "anyone can read" on messages
+  for select using (true);
+-- 投稿・編集・削除は本人のみ（auth.uid() = user_id）
+create policy "owner can insert" on messages
+  for insert to authenticated with check (auth.uid() = user_id);
+create policy "owner can update" on messages
+  for update to authenticated using (auth.uid() = user_id);
+create policy "owner can delete" on messages
+  for delete to authenticated using (auth.uid() = user_id);
 ```
+> 認証導入前（Phase 6 まで）は anon に SELECT/INSERT を許す緩いポリシーで動かしていた。
+> Phase 7（#31）で上記オーナーベースに移行する。
 
 ---
 
@@ -113,6 +131,8 @@ create policy "anon can insert" on messages for insert to anon with check (true)
 - **publishable キーはクライアント（ブラウザ）に出る設計**なので、混入しても致命的ではない（RLS で守る）。
   それでも値はハードコードせず `.env`（`VITE_SUPABASE_*`）で扱う。
 - **`service_role`（秘密）キーは絶対にコミット・クライアント同梱しない**。漏れると RLS を貫通し全データ操作が可能。
+- **Google OAuth の `client_secret` は Supabase ダッシュボードに入れるだけ**。リポジトリ・クライアントには絶対に置かない。
+  （client_id は公開されても可だが、secret は秘密。OAuth のリダイレクト URL は Google/Supabase 側の設定で完結する。）
 - `.env` は `.gitignore` 済み。テンプレートとして `.env.example`（値なし）をコミットする。
 - **pre-commit で gitleaks が走る**（`.githooks/pre-commit`、`core.hooksPath` で有効化）。
   秘密混入を検知したらコミットを止める。誤検知は `.gitleaks.toml` の allowlist で除外する。
