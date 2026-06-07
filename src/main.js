@@ -48,6 +48,18 @@ let tempMarker = null
 // 将来その id のマーカーを更新/削除したくなったときに O(1) で引ける。
 const markersById = new Map()
 
+// 1行（messages の1レコード）を地図のマーカーにして登録する共通関数。
+// SELECT（#10 起動時の全件描画）と Realtime（#11 新規 INSERT）の両方から呼ぶ。
+// 重複防止: 既に同じ id を描いていたら何もしない。これにより「起動時 SELECT と
+// 購読が同じ行を二重に届けても1回しか描かない」が保証され、両者の到着順を気にせず済む。
+// markersById を Map にした布石（id で O(1) 参照）がここで効く。
+function addMarker(row) {
+  if (markersById.has(row.id)) return
+  // 緯度経度は Leaflet の [lat, lng] 順（地図クリック時の e.latlng と同じ並び）。
+  const marker = L.marker([row.lat, row.lng]).addTo(map)
+  markersById.set(row.id, marker)
+}
+
 // --- #8 投稿モーダル ---
 // 見た目は ui-designer が index.html / style.css に用意済み。ここでは DOM 契約（ID）に従って
 // 要素を掴み、開閉と後始末のロジックだけを書く。開閉は #post-modal の hidden 属性で行う約束。
@@ -152,13 +164,44 @@ async function loadMessages() {
     return
   }
 
-  // 各行をマーカーにして地図に乗せ、id → marker を対応表に登録する。
-  // 緯度経度は Leaflet の [lat, lng] 順で渡す（地図クリック時の e.latlng と同じ並び）。
+  // 各行をマーカーにして地図に乗せる（生成・登録・重複防止は addMarker に集約）。
   for (const row of data) {
-    const marker = L.marker([row.lat, row.lng]).addTo(map)
-    markersById.set(row.id, marker)
+    addMarker(row)
   }
 }
 
 // 起動時に1回だけ呼ぶ。async だが「投げっぱなし」でよい（描画完了を待つ相手がいない）。
 loadMessages()
+
+// --- #11 Realtime 購読で新規ピンを即反映 ---
+// 骨格は「習ったチャットの Realtime 購読」と同じ（CLAUDE.md §5 原則2）。変わるのは
+// 受信時の出力先がリスト追加 → 地図マーカー（= addMarker）だけ。
+// 受信 payload の new に新規行（{id, user_name, text, lat, lng, created_at}）が入る。
+// 自分の INSERT もこの購読経由で1回だけ届く（送信側でローカル描画していないので二重にならない）。
+// 注意: 出ないときは Supabase 側の Realtime publication 有効化と RLS の SELECT ポリシーを疑う
+// （Realtime は RLS に従う / CLAUDE.md §6）。
+// channel を変数に保持する理由: npm run dev の HMR でこのモジュールが再評価されるたび、
+// 古い購読が残ったまま新しい購読が積み増すのを防ぐため。下の import.meta.hot で後始末する。
+const messagesChannel = supabase
+  .channel('messages-inserts')
+  .on(
+    'postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'messages' },
+    (payload) => addMarker(payload.new),
+  )
+  // subscribe のコールバックで購読状態を見える化する。Realtime 最大の落とし穴
+  //「INSERT は成功するのに相手に出ない」は publication 未有効化 / RLS 不足で起き、
+  // 無言だと切り分けにくい。SUBSCRIBED 以外（CHANNEL_ERROR / TIMED_OUT）をログに出す。
+  .subscribe((status, err) => {
+    if (status === 'SUBSCRIBED') {
+      console.log('[realtime] messages を購読開始')
+    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      console.error('[realtime] 購読に失敗:', status, err?.message ?? '')
+    }
+  })
+
+// HMR 時の後始末（開発時のみ。本番ビルドではこのブロックは取り除かれる）。
+// 古い購読を解除してから新モジュールが張り直すことで、チャンネルの積み増しを防ぐ。
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => supabase.removeChannel(messagesChannel))
+}
