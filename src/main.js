@@ -42,6 +42,12 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 // （この仮マーカーは「これから置く場所」のプレビュー。保存＝INSERT は #9 で行う。）
 let tempMarker = null
 
+// --- #10 保存済みピンの描画 ---
+// id → Leaflet マーカーの対応表。配列ではなく Map を使うのは「id で引ける」ようにするため。
+// これは #11（Realtime）への布石: INSERT が飛んできたとき「もう描いた id か？」を判定したり、
+// 将来その id のマーカーを更新/削除したくなったときに O(1) で引ける。
+const markersById = new Map()
+
 // --- #8 投稿モーダル ---
 // 見た目は ui-designer が index.html / style.css に用意済み。ここでは DOM 契約（ID）に従って
 // 要素を掴み、開閉と後始末のロジックだけを書く。開閉は #post-modal の hidden 属性で行う約束。
@@ -130,3 +136,29 @@ submitBtn.addEventListener('click', async () => {
   // 成功時のみ後始末。保存済みピンが地図に出るのは #10（SELECT 描画）/ #11（Realtime）。
   cancelPost()
 })
+
+// --- #10 起動時に保存済みピンを全件 SELECT → 地図に描画 ---
+// 骨格は #5 の「SELECT で取得確認」と同じ。変わるのは出力先が console → 地図のマーカーだけ
+// （CLAUDE.md §5 原則2）。ロックの開閉判定・近接チェックはまだ書かない（§2 Non-Goal）。
+// ここでは「並べるだけ」。text の中身（メッセージ本文）も popup には出さない:
+// 「その場所に行った人だけが読める」が体験の核なので、近接解錠は後続 Issue で扱う。
+async function loadMessages() {
+  // 全件 SELECT。INSERT と同じ messages テーブルが相手（型はチャットに lat/lng を足しただけ）。
+  const { data, error } = await supabase.from('messages').select('*')
+
+  if (error) {
+    // 取得失敗時は地図を白紙のまま残し、原因をコンソールに出す（PoC は最小限）。
+    console.error('ピンの読み込みに失敗:', error.message)
+    return
+  }
+
+  // 各行をマーカーにして地図に乗せ、id → marker を対応表に登録する。
+  // 緯度経度は Leaflet の [lat, lng] 順で渡す（地図クリック時の e.latlng と同じ並び）。
+  for (const row of data) {
+    const marker = L.marker([row.lat, row.lng]).addTo(map)
+    markersById.set(row.id, marker)
+  }
+}
+
+// 起動時に1回だけ呼ぶ。async だが「投げっぱなし」でよい（描画完了を待つ相手がいない）。
+loadMessages()
