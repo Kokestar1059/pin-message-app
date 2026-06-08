@@ -200,8 +200,82 @@ const messagesChannel = supabase
     }
   })
 
+// --- #13 Geolocation で現在地取得 + 現在地マーカー ---
+// 自分の現在地を地図に出す。これは Supabase/チャット骨格とは無関係の「ブラウザ標準 API」。
+// 押さえる点が3つ:
+//  1) コールバック型: getCurrentPosition(success, error, options)。Promise ではないので await
+//     できない。成功は success、失敗は error コールバックに分岐して届く（保存/購読の async とは別物）。
+//  2) HTTPS 必須（localhost は例外で可）。npm run dev は localhost、本番は GitHub Pages の HTTPS
+//     （#17）で満たす。http の本番では呼んでも拒否される。
+//  3) 取得は1回だけ（getCurrentPosition）。移動に追従させたい近接ロック解除（#15）は、そのとき
+//     watchPosition を検討する。#13 は「現在地を出す」だけなので1回で十分。
+
+// 現在地マーカーは「常に1個」をモジュール変数で持つ（仮ピン tempMarker と同じ発想）。
+// 取得し直したら setLatLng で“移動”させ、増やさない。
+let myLocationMarker = null
+
+// 取得成功: 緯度経度を受け取り、現在地マーカーを置く（or 移動）。
+// 既存ピン（デフォルトの雫アイコン）と一目で区別するため circleMarker（青い丸）を使う。
+// circleMarker の色・半径は JS 内で完結する（CSS 不要）ので main.js（ロジック側）に収まる。
+function showMyLocation(position) {
+  // 緯度経度は position.coords に入る。Leaflet は [lat, lng] 順なので並べ替えて使う。
+  const { latitude, longitude } = position.coords
+  const latlng = [latitude, longitude]
+
+  if (myLocationMarker) {
+    myLocationMarker.setLatLng(latlng) // 既存を移動（1個を保つ）
+  } else {
+    // radius はピクセル単位。色で「現在地」を表す（Google マップ風の青）。
+    myLocationMarker = L.circleMarker(latlng, {
+      radius: 8,
+      color: '#1a73e8', // 枠線
+      fillColor: '#1a73e8', // 塗り
+      fillOpacity: 0.9,
+      weight: 2,
+    }).addTo(map)
+
+    // 初回取得時のみ自分が画面内に来るよう地図を寄せる（ズームは維持）。
+    // 再取得でユーザーのパン/ズーム操作を奪わないよう、リセンタリングは初回だけに限定する
+    // （#15 で watchPosition に切り替えても追従中に視点を奪わない布石）。
+    map.setView(latlng, map.getZoom())
+  }
+}
+
+// 取得失敗: error.code で原因を分岐。PoC なので「拒否」だけ alert で気づかせ、他は console に留める。
+// 定数（PERMISSION_DENIED など）は error オブジェクト自身が持つので error.PERMISSION_DENIED で比較できる。
+function onLocationError(error) {
+  if (error.code === error.PERMISSION_DENIED) {
+    console.warn('[geolocation] 位置情報が拒否されました')
+    alert(
+      '位置情報が使えないと、現地に行ってもメッセージを開けません。ブラウザの許可をご確認ください。',
+    )
+  } else if (error.code === error.POSITION_UNAVAILABLE) {
+    console.error('[geolocation] 現在地を取得できませんでした（電波 / GPS）')
+  } else if (error.code === error.TIMEOUT) {
+    console.error('[geolocation] 現在地の取得がタイムアウトしました')
+  }
+}
+
+// 起動時に1回、現在地を取りに行く。古いブラウザ対策で API の存在を一応確認してから呼ぶ。
+//  enableHighAccuracy: GPS を優先（近接判定 #15 の精度に効く。バッテリーは食う）。
+//  timeout: 取れないとき無限に待たないための上限（10 秒）。
+//  maximumAge: 0 で毎回新しく取得（キャッシュ済みの古い位置を使い回さない）。
+if ('geolocation' in navigator) {
+  navigator.geolocation.getCurrentPosition(showMyLocation, onLocationError, {
+    enableHighAccuracy: true,
+    timeout: 10000,
+    maximumAge: 0,
+  })
+} else {
+  console.error('[geolocation] このブラウザは位置情報に対応していません')
+}
+
 // HMR 時の後始末（開発時のみ。本番ビルドではこのブロックは取り除かれる）。
-// 古い購読を解除してから新モジュールが張り直すことで、チャンネルの積み増しを防ぐ。
+// 古い購読を解除し、現在地マーカーも消してから新モジュールが張り直すことで、
+// チャンネル・マーカーの積み増しを防ぐ（マーカーを増やさない既存思想と揃える）。
 if (import.meta.hot) {
-  import.meta.hot.dispose(() => supabase.removeChannel(messagesChannel))
+  import.meta.hot.dispose(() => {
+    supabase.removeChannel(messagesChannel)
+    myLocationMarker?.remove()
+  })
 }
