@@ -14,6 +14,8 @@ import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 // Supabase クライアント（src/supabase.js で1個だけ生成して使い回す）。投稿の保存に使う。
 import { supabase } from './supabase.js'
+// #14 のハバーサイン距離関数。#15 の近接判定（現在地 ↔ ピン）で使う。
+import { distanceMeters } from './distance.js'
 
 // 公式定石: デフォルトアイコン（Icon.Default）の「画像URLだけ」を import した正しい URL に差し替える。
 // サイズ・アンカー等は Leaflet 既定値のままで良いので指定しない（mergeOptions は渡した分だけ上書き）。
@@ -25,6 +27,11 @@ L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl })
 // 初期表示の中心とズーム。2人で使う PoC なので暫定で日本（東京駅）。現地で調整する前提。
 const INITIAL_CENTER = [35.681236, 139.767125]
 const INITIAL_ZOOM = 13
+
+// --- #15 近接ロック解除のしきい値 ---
+// 現在地とピンの距離がこの値（メートル）未満なら本文を開く。CLAUDE.md §6 の通り
+// 30〜50m から開始（GPS 誤差 5〜20m を吸収）。現地で調整する前提の暫定値（#16/#18）。
+const THRESHOLD_M = 50
 
 // index.html の <div id="map"> に地図を割り当て、初期の中心・ズームを設定する。
 const map = L.map('map').setView(INITIAL_CENTER, INITIAL_ZOOM)
@@ -57,6 +64,10 @@ function addMarker(row) {
   if (markersById.has(row.id)) return
   // 緯度経度は Leaflet の [lat, lng] 順（地図クリック時の e.latlng と同じ並び）。
   const marker = L.marker([row.lat, row.lng]).addTo(map)
+  // #15 タップ処理は1か所（onMarkerTap）に集約する（Issue #15 コメントの指示）。
+  // row をクロージャで閉じ込めるので、このマーカーがどの行かを onMarkerTap が知れる。
+  // 将来 #32（自分のピン → 管理モーダル）の分岐も onMarkerTap に足すだけで済む。
+  marker.on('click', () => onMarkerTap(row))
   markersById.set(row.id, marker)
 }
 
@@ -112,7 +123,9 @@ overlay.addEventListener('click', cancelPost)
 // Esc キーでも閉じる。モーダルは aria-modal を名乗っているので、キーボードでも閉じられる
 // 状態に揃える（開いているときだけ反応させる）。
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !modal.hidden) cancelPost()
+  if (e.key !== 'Escape') return
+  if (!modal.hidden) cancelPost() // 投稿モーダル
+  if (!viewModal.hidden) closeViewModal() // 閲覧モーダル（#15）
 })
 
 // 「ここに置く」ボタン。入力内容を Supabase に保存する。
@@ -148,6 +161,65 @@ submitBtn.addEventListener('click', async () => {
   // 成功時のみ後始末。保存済みピンが地図に出るのは #10（SELECT 描画）/ #11（Realtime）。
   cancelPost()
 })
+
+// --- #15 閲覧モーダル（マーカータップ → 近ければ本文 / 遠ければロック） ---
+// 見た目は ui-designer が用意済み（index.html / style.css）。ここでは DOM 契約（ID）に従って
+// 要素を掴み、3状態のどれを見せるかの「ロジック」だけを書く。
+// 大原則（CLAUDE.md §5 原則1）: ロック状態は保存しない。タップのたびに現在地との距離を
+// その場で計算して開閉を決める。保存するのはピンの中身（user_name / text / lat / lng）だけ。
+const viewModal = document.getElementById('view-modal')
+const viewOverlay = viewModal.querySelector('.modal__overlay')
+const viewName = document.getElementById('view-name')
+const viewUnlocked = document.getElementById('view-unlocked') // 解錠状態（近い）
+const viewText = document.getElementById('view-text') // 本文（解錠時のみ埋める）
+const viewLocked = document.getElementById('view-locked') // ロック状態（遠い）
+const viewLockDistance = document.getElementById('view-lock-distance') // 距離目安テキスト
+const viewNoLocation = document.getElementById('view-nolocation') // 現在地が無い状態
+const viewCloseBtn = document.getElementById('view-close')
+
+function closeViewModal() {
+  viewModal.hidden = true
+}
+
+// マーカータップの単一の入口。row はそのピンの行（{id, user_name, text, lat, lng, ...}）。
+// いまは認証前（#31 未実装）なので「閲覧者フロー」だけ。認証導入後は、ここで
+// row.user_id === 自分.id を見て #32 の管理モーダル（距離に関係なく編集/削除）へ分岐する。
+function onMarkerTap(row) {
+  // 投稿者名はどの状態でも常に見せる（誰が置いたかは隠さない。隠すのは本文だけ）。
+  viewName.textContent = row.user_name
+
+  // まず3状態をすべて隠してから、これと決めた1つだけを見せる（取り違え防止）。
+  viewUnlocked.hidden = true
+  viewLocked.hidden = true
+  viewNoLocation.hidden = true
+
+  if (myLocation === null) {
+    // 現在地が未取得（許可待ち / 取得失敗）。ここで距離計算に入ると NaN < THRESHOLD が
+    // 常に false になり「永久ロック」する（#14 レビューの指摘）。だから距離判定の前に弾く。
+    viewNoLocation.hidden = false
+  } else {
+    // 現在地 ↔ ピンの距離をその場で計算（保存しない派生情報）。
+    const distance = distanceMeters(myLocation[0], myLocation[1], row.lat, row.lng)
+
+    if (distance < THRESHOLD_M) {
+      // 近い → 解錠。本文を見せる。
+      viewText.textContent = row.text
+      viewUnlocked.hidden = false
+    } else {
+      // 遠い → ロック。距離の目安だけ伝えて「行けば開く」を促す。
+      // 10m 単位に丸める（GPS が動くので 1m 単位の数字は精度の幻。10m 粒度で十分）。
+      const rounded = Math.round(distance / 10) * 10
+      viewLockDistance.textContent = `ここから約 ${rounded}m 先にメッセージがあります`
+      viewLocked.hidden = false
+    }
+  }
+
+  viewModal.hidden = false
+}
+
+// 閉じる: ボタン / オーバーレイ（カード外）クリック。
+viewCloseBtn.addEventListener('click', closeViewModal)
+viewOverlay.addEventListener('click', closeViewModal)
 
 // --- #10 起動時に保存済みピンを全件 SELECT → 地図に描画 ---
 // 骨格は #5 の「SELECT で取得確認」と同じ。変わるのは出力先が console → 地図のマーカーだけ
@@ -214,6 +286,11 @@ const messagesChannel = supabase
 // 取得し直したら setLatLng で“移動”させ、増やさない。
 let myLocationMarker = null
 
+// #15 近接判定で使う「最新の現在地座標」[lat, lng]。watchPosition が更新する。
+// null = まだ一度も取れていない（許可待ち / 失敗）。onMarkerTap はこれが null なら
+// 距離計算に入らず「現在地なし」状態を出す（NaN による永久ロックを避ける）。
+let myLocation = null
+
 // 取得成功: 緯度経度を受け取り、現在地マーカーを置く（or 移動）。
 // 既存ピン（デフォルトの雫アイコン）と一目で区別するため circleMarker（青い丸）を使う。
 // circleMarker の色・半径は JS 内で完結する（CSS 不要）ので main.js（ロジック側）に収まる。
@@ -221,6 +298,9 @@ function showMyLocation(position) {
   // 緯度経度は position.coords に入る。Leaflet は [lat, lng] 順なので並べ替えて使う。
   const { latitude, longitude } = position.coords
   const latlng = [latitude, longitude]
+
+  // #15 近接判定が読む最新座標を更新（watchPosition が動くたびここが呼ばれ、追従する）。
+  myLocation = latlng
 
   if (myLocationMarker) {
     myLocationMarker.setLatLng(latlng) // 既存を移動（1個を保つ）
@@ -256,12 +336,16 @@ function onLocationError(error) {
   }
 }
 
-// 起動時に1回、現在地を取りに行く。古いブラウザ対策で API の存在を一応確認してから呼ぶ。
-//  enableHighAccuracy: GPS を優先（近接判定 #15 の精度に効く。バッテリーは食う）。
-//  timeout: 取れないとき無限に待たないための上限（10 秒）。
-//  maximumAge: 0 で毎回新しく取得（キャッシュ済みの古い位置を使い回さない）。
+// #15: 起動時に watchPosition で「追従」を開始する（#13 の getCurrentPosition 1回から変更）。
+// 近接ロック解除は「現地に着いてタップしたら最新の現在地で判定」が要なので、移動に合わせて
+// myLocation を更新し続ける必要がある。watchPosition は位置が変わるたび success を呼ぶ。
+// 戻り値は watch id で、clearWatch で止められる（HMR の後始末で使う）。
+//  enableHighAccuracy: GPS を優先（近接判定の精度に効く。バッテリーは食う）。
+//  timeout: 1回あたりの取得上限（10 秒）。
+//  maximumAge: 0 でキャッシュの古い位置を使い回さず毎回新しく取る。
+let geoWatchId = null
 if ('geolocation' in navigator) {
-  navigator.geolocation.getCurrentPosition(showMyLocation, onLocationError, {
+  geoWatchId = navigator.geolocation.watchPosition(showMyLocation, onLocationError, {
     enableHighAccuracy: true,
     timeout: 10000,
     maximumAge: 0,
@@ -277,5 +361,7 @@ if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     supabase.removeChannel(messagesChannel)
     myLocationMarker?.remove()
+    // watchPosition は止めないとモジュール再評価のたびに監視が積み増す。clearWatch で解除。
+    if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId)
   })
 }

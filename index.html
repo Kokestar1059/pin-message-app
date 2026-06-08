@@ -33,6 +33,49 @@
       </div>
     </div>
 
+    <!-- 閲覧モーダル。マーカータップで開く。既定は hidden。
+         現在地とピンの距離を main.js が計算し、下の3状態のうち1つだけ
+         （#view-unlocked / #view-locked / #view-nolocation）の hidden を外して見せる。
+         視覚層はガワと装飾まで。状態切替と動的テキスト差し込みは main.js が行う。 -->
+    <div id="view-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="view-modal-title">
+      <div class="modal__overlay"></div>
+      <div class="modal__card" role="document">
+        <!-- 誰が置いたか。3状態のどれでも常に見せるヘッダー的扱い。 -->
+        <p class="view__from">
+          <span class="view__from-pin" aria-hidden="true">📍</span>
+          <span id="view-name" class="view__name"></span>
+          <span class="view__from-suffix">さんのメッセージ</span>
+        </p>
+
+        <!-- 状態1：解錠（近い）。本文を読める。 -->
+        <div id="view-unlocked" class="view__state" hidden>
+          <h2 id="view-modal-title" class="modal__title">メッセージが開きました</h2>
+          <p id="view-text" class="view__text"></p>
+        </div>
+
+        <!-- 状態2：ロック（遠い）。隠すが拒絶しない。行けば開けるトーン。 -->
+        <div id="view-locked" class="view__state view__locked" hidden>
+          <div class="view__lock-icon" aria-hidden="true">🔒</div>
+          <h2 class="modal__title view__lock-title">まだ開けられません</h2>
+          <p class="modal__lead">この場所に行くと、メッセージのロックが外れます。</p>
+          <p id="view-lock-distance" class="view__lock-distance"></p>
+        </div>
+
+        <!-- 状態3：現在地が未取得。案内文（静的）。 -->
+        <div id="view-nolocation" class="view__state view__nolocation" hidden>
+          <div class="view__lock-icon" aria-hidden="true">📡</div>
+          <h2 class="modal__title">現在地を確認中です</h2>
+          <p class="modal__lead">
+            位置情報の許可を確認してください。現在地が分かると、近くのメッセージを開けるようになります。
+          </p>
+        </div>
+
+        <div class="modal__actions">
+          <button id="view-close" class="btn btn--primary" type="button">閉じる</button>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
