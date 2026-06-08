@@ -160,3 +160,90 @@ body {
 .btn--ghost:hover {
   background: #f1f3f6;
 }
+
+/* =========================================================
+   閲覧モーダル（見た目だけ）
+   - 投稿モーダルと同じ .modal 系を再利用。位置・z-index・[hidden] 打ち消しだけ揃える。
+   - 中身は main.js が「解錠 / ロック / 現在地なし」の3状態を出し分ける。
+   ========================================================= */
+#view-modal.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000; /* #post-modal と同じ帯。Leaflet コントロールより上 */
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+/* hidden の間は確実に隠す（display:grid に勝たせる。#post-modal と同様） */
+#view-modal[hidden] {
+  display: none;
+}
+
+/* 投稿者ヘッダー。どの状態でも常に見える「誰から」の行。 */
+.view__from {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 0.95rem;
+  color: #5b6573;
+  line-height: 1.5;
+}
+
+.view__from-pin {
+  font-size: 1.1rem;
+}
+
+.view__name {
+  font-weight: 700;
+  color: #1c2530;
+}
+
+/* 各状態セクションは投稿者ヘッダーの下に少し間を空けて並ぶ */
+.view__state {
+  margin-top: 16px;
+}
+
+/* --- 状態1：解錠（近い） --- */
+/* 本文。読ませるのが主役なので大きめ・行間ゆったり・改行を保持。 */
+.view__text {
+  margin-top: 12px;
+  font-size: 1.15rem;
+  color: #1c2530;
+  line-height: 1.7;
+  white-space: pre-wrap; /* 入力時の改行を尊重 */
+  word-break: break-word;
+}
+
+/* --- 状態2：ロック / 状態3：現在地なし（中央寄せの案内系） --- */
+.view__locked,
+.view__nolocation {
+  text-align: center;
+}
+
+/* 鍵・電波などの大アイコン。拒絶感より「あと一歩」の余白感を出す。 */
+.view__lock-icon {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: 12px;
+}
+
+/* 距離目安。前向きトーンで目立たせる淡い帯。テキストは main.js が差し込む。 */
+.view__lock-distance {
+  margin-top: 14px;
+  display: inline-block;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #2a5fbd;
+  background: #eaf1fc;
+  border: 1px solid #cfe0fa;
+  border-radius: 10px;
+  padding: 10px 16px;
+  line-height: 1.5;
+}
+
+/* 距離が未確定（空文字）のときは帯ごと隠して間延びを防ぐ */
+.view__lock-distance:empty {
+  display: none;
+}
