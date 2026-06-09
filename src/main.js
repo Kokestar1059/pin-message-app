@@ -7,6 +7,8 @@ import L from 'leaflet'
 import { supabase } from './supabase.js'
 // #14 のハバーサイン距離関数。#15 の近接判定（現在地 ↔ ピン）で使う。
 import { distanceMeters } from './distance.js'
+// #30 認証（Google OAuth）のラッパ。ログイン壁とセッション購読に使う。
+import { signInWithGoogle, signOut, onAuthChange } from './auth.js'
 
 // 初期表示の中心とズーム。少人数で使う PoC なので暫定で日本（東京駅）。現地で調整する前提。
 const INITIAL_CENTER = [35.681236, 139.767125]
@@ -237,8 +239,8 @@ async function loadMessages() {
   }
 }
 
-// 起動時に1回だけ呼ぶ。async だが「投げっぱなし」でよい（描画完了を待つ相手がいない）。
-loadMessages()
+// 起動（loadMessages / Realtime購読 / 現在地）は #30 のゲート startApp() からのみ呼ぶ。
+// 未ログインでは地図にデータを出さない・位置情報も求めない（プライバシー）。
 
 // --- #11 Realtime 購読で新規ピンを即反映 ---
 // 骨格は「習ったチャットの Realtime 購読」と同じ（CLAUDE.md §5 原則2）。変わるのは
@@ -249,23 +251,27 @@ loadMessages()
 // （Realtime は RLS に従う / CLAUDE.md §6）。
 // channel を変数に保持する理由: npm run dev の HMR でこのモジュールが再評価されるたび、
 // 古い購読が残ったまま新しい購読が積み増すのを防ぐため。下の import.meta.hot で後始末する。
-const messagesChannel = supabase
-  .channel('messages-inserts')
-  .on(
-    'postgres_changes',
-    { event: 'INSERT', schema: 'public', table: 'messages' },
-    (payload) => addMarker(payload.new),
-  )
-  // subscribe のコールバックで購読状態を見える化する。Realtime 最大の落とし穴
-  //「INSERT は成功するのに相手に出ない」は publication 未有効化 / RLS 不足で起き、
-  // 無言だと切り分けにくい。SUBSCRIBED 以外（CHANNEL_ERROR / TIMED_OUT）をログに出す。
-  .subscribe((status, err) => {
-    if (status === 'SUBSCRIBED') {
-      console.log('[realtime] messages を購読開始')
-    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-      console.error('[realtime] 購読に失敗:', status, err?.message ?? '')
-    }
-  })
+// HMR 後始末（下）でも参照するのでモジュール変数。購読開始は startApp（ログイン後）からのみ。
+let messagesChannel = null
+function subscribeMessages() {
+  messagesChannel = supabase
+    .channel('messages-inserts')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages' },
+      (payload) => addMarker(payload.new),
+    )
+    // subscribe のコールバックで購読状態を見える化する。Realtime 最大の落とし穴
+    //「INSERT は成功するのに相手に出ない」は publication 未有効化 / RLS 不足で起き、
+    // 無言だと切り分けにくい。SUBSCRIBED 以外（CHANNEL_ERROR / TIMED_OUT）をログに出す。
+    .subscribe((status, err) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('[realtime] messages を購読開始')
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.error('[realtime] 購読に失敗:', status, err?.message ?? '')
+      }
+    })
+}
 
 // --- #13 Geolocation で現在地取得 + 現在地マーカー ---
 // 自分の現在地を地図に出す。これは Supabase/チャット骨格とは無関係の「ブラウザ標準 API」。
@@ -339,25 +345,80 @@ function onLocationError(error) {
 //  enableHighAccuracy: GPS を優先（近接判定の精度に効く。バッテリーは食う）。
 //  timeout: 1回あたりの取得上限（10 秒）。
 //  maximumAge: 0 でキャッシュの古い位置を使い回さず毎回新しく取る。
+// 現在地の追従を開始する。ログイン後（startApp）からのみ呼ぶ＝未ログインのうちは
+// 位置情報の許可ダイアログも出さない。geoWatchId は HMR 後始末で使うのでモジュール変数。
 let geoWatchId = null
-if ('geolocation' in navigator) {
-  geoWatchId = navigator.geolocation.watchPosition(showMyLocation, onLocationError, {
-    enableHighAccuracy: true,
-    timeout: 10000,
-    maximumAge: 0,
-  })
-} else {
-  console.error('[geolocation] このブラウザは位置情報に対応していません')
+function startGeolocation() {
+  if ('geolocation' in navigator) {
+    geoWatchId = navigator.geolocation.watchPosition(showMyLocation, onLocationError, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
+    })
+  } else {
+    console.error('[geolocation] このブラウザは位置情報に対応していません')
+  }
 }
+
+// --- #30 認証ゲート（ログイン壁） ---
+// 見た目は ui-designer が用意済み。ID 契約に従って掴む:
+//   #auth-gate   … 全画面ゲート（既定で表示）。ログイン後に hidden を付けて隠す。
+//   #login-google … ゲート内の「Google で入る」ボタン。
+//   #logout      … 地図上のログアウト（既定で hidden）。ログイン後に hidden を外す。
+const authGate = document.getElementById('auth-gate')
+const loginBtn = document.getElementById('login-google')
+const logoutBtn = document.getElementById('logout')
+
+// アプリ本体（取得・購読・現在地）の起動。onAuthChange は初期セッションも流すうえ
+// ログインのたびに発火しうるので、二重に購読/取得しないよう1回だけに守る。
+let appStarted = false
+function startApp() {
+  if (appStarted) return
+  appStarted = true
+  loadMessages() // 保存済みピンを描画
+  subscribeMessages() // 新規ピンの Realtime 反映
+  startGeolocation() // 現在地の追従（ここで初めて位置情報の許可を求める）
+}
+
+// 画面の出し分け（地図 ↔ ログイン）。既存モーダルと同じく hidden 属性の付け外しで行う。
+function showApp() {
+  authGate.hidden = true
+  logoutBtn.hidden = false
+}
+function showLogin() {
+  authGate.hidden = false
+  logoutBtn.hidden = true
+}
+
+// ボタン配線: クリックでログイン開始 / ログアウト。関数は“呼ばず渡す”（カッコ無し）。
+loginBtn.addEventListener('click', signInWithGoogle)
+logoutBtn.addEventListener('click', signOut)
+
+// 認証状態の購読。これ1つで初回判定（ログイン済みか）と以後の変化を兼ねる。
+//  - session あり          → 地図を見せてアプリ起動
+//  - 使用後にログアウト    → 状態を完全リセットするためページ再読込（購読/マーカーの後始末を簡潔に）
+//  - 初回から未ログイン     → ログイン画面のまま
+const authSubscription = onAuthChange((session) => {
+  if (session) {
+    showApp()
+    startApp()
+  } else if (appStarted) {
+    window.location.reload()
+  } else {
+    showLogin()
+  }
+})
 
 // HMR 時の後始末（開発時のみ。本番ビルドではこのブロックは取り除かれる）。
 // 古い購読を解除し、現在地マーカーも消してから新モジュールが張り直すことで、
 // チャンネル・マーカーの積み増しを防ぐ（マーカーを増やさない既存思想と揃える）。
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    supabase.removeChannel(messagesChannel)
+    if (messagesChannel) supabase.removeChannel(messagesChannel)
     myLocationMarker?.remove()
     // watchPosition は止めないとモジュール再評価のたびに監視が積み増す。clearWatch で解除。
     if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId)
+    // 認証購読も解除する。これを忘れると HMR 再評価のたびにリスナーが積み増す。
+    authSubscription?.unsubscribe()
   })
 }
