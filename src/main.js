@@ -3,26 +3,10 @@ import './style.css'
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
 
-// --- Leaflet マーカーアイコンの修正（Vite 定番の罠） ---
-// Leaflet は marker-icon.png 等を相対パスで「自動検出」して読むが、Vite はビルド時に
-// 画像をハッシュ付きの名前に置き換えるため、その自動検出パスがズレて 404 になり、
-// ピンが表示されない（クリックは効くが見えない）。対処は「画像を import して Vite に
-// 正しい URL を解決させ、それをデフォルトアイコンに渡す」こと。
-// ※ Vite では画像を import すると、変数にはビルド後の正しい URL 文字列が入る。
-import iconUrl from 'leaflet/dist/images/marker-icon.png'
-import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
-import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 // Supabase クライアント（src/supabase.js で1個だけ生成して使い回す）。投稿の保存に使う。
 import { supabase } from './supabase.js'
 // #14 のハバーサイン距離関数。#15 の近接判定（現在地 ↔ ピン）で使う。
 import { distanceMeters } from './distance.js'
-
-// 公式定石: デフォルトアイコン（Icon.Default）の「画像URLだけ」を import した正しい URL に差し替える。
-// サイズ・アンカー等は Leaflet 既定値のままで良いので指定しない（mergeOptions は渡した分だけ上書き）。
-// delete _getIconUrl: Icon.Default は本来「相対パスから URL を自動生成」する独自メソッドを持つ。
-// これを消して基底 Icon の挙動（options の iconUrl 等をそのまま使う）に戻すことで、import した URL が確実に効く。
-delete L.Icon.Default.prototype._getIconUrl
-L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl })
 
 // 初期表示の中心とズーム。2人で使う PoC なので暫定で日本（東京駅）。現地で調整する前提。
 const INITIAL_CENTER = [35.681236, 139.767125]
@@ -42,6 +26,20 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution:
     '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 }).addTo(map)
+
+// --- #16 ピンの見た目（ミニマル刷新） ---
+// メッセージピンは既定の雫アイコン（L.Icon.Default の画像）をやめ、L.divIcon に切り替える。
+// 狙い: 見た目を CSS（.pin-marker / ui-designer 所有）に持たせ、ロジックは「型」だけ持つ
+// （§14 の役割分担）。divIcon は className を渡すと既定の白い四角スタイル（leaflet-div-icon）を
+// 名乗らないので、.pin-marker だけが効く。これで marker-icon.png の Vite 画像URL解決ハックも不要に。
+// iconSize/iconAnchor: 18×18 の箱を、その中心 [9,9] が座標に来るよう置く（中央寄せの点）。
+const pinIcon = L.divIcon({ className: 'pin-marker', iconSize: [18, 18], iconAnchor: [9, 9] })
+// 投稿前の仮ピンは「まだ確定していない下書き」。同じ型に --draft を足し、CSS で控えめに見せ分ける。
+const draftPinIcon = L.divIcon({
+  className: 'pin-marker pin-marker--draft',
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+})
 
 // --- #7 地図クリックで座標取得 → 仮マーカー ---
 // 仮マーカーは「常に1個だけ」をモジュール変数で持ち回す。クリックのたびに新規作成すると
@@ -63,7 +61,7 @@ const markersById = new Map()
 function addMarker(row) {
   if (markersById.has(row.id)) return
   // 緯度経度は Leaflet の [lat, lng] 順（地図クリック時の e.latlng と同じ並び）。
-  const marker = L.marker([row.lat, row.lng]).addTo(map)
+  const marker = L.marker([row.lat, row.lng], { icon: pinIcon }).addTo(map)
   // #15 タップ処理は1か所（onMarkerTap）に集約する（Issue #15 コメントの指示）。
   // row をクロージャで閉じ込めるので、このマーカーがどの行かを onMarkerTap が知れる。
   // 将来 #32（自分のピン → 管理モーダル）の分岐も onMarkerTap に足すだけで済む。
@@ -111,7 +109,7 @@ map.on('click', (e) => {
   if (tempMarker) {
     tempMarker.setLatLng(e.latlng) // 既存の仮マーカーを移動（1個を保つ）
   } else {
-    tempMarker = L.marker(e.latlng).addTo(map) // 初回だけ新規作成
+    tempMarker = L.marker(e.latlng, { icon: draftPinIcon }).addTo(map) // 初回だけ新規作成
   }
   openModal()
 })
@@ -173,7 +171,6 @@ const viewName = document.getElementById('view-name')
 const viewUnlocked = document.getElementById('view-unlocked') // 解錠状態（近い）
 const viewText = document.getElementById('view-text') // 本文（解錠時のみ埋める）
 const viewLocked = document.getElementById('view-locked') // ロック状態（遠い）
-const viewLockDistance = document.getElementById('view-lock-distance') // 距離目安テキスト
 const viewNoLocation = document.getElementById('view-nolocation') // 現在地が無い状態
 const viewCloseBtn = document.getElementById('view-close')
 
@@ -202,14 +199,12 @@ function onMarkerTap(row) {
     const distance = distanceMeters(myLocation[0], myLocation[1], row.lat, row.lng)
 
     if (distance < THRESHOLD_M) {
-      // 近い → 解錠。本文を見せる。
+      // 近い → 解錠。本文（ことば）を見せる（見出しは置かず、ことばそのものを主役に）。
       viewText.textContent = row.text
       viewUnlocked.hidden = false
     } else {
-      // 遠い → ロック。距離の目安だけ伝えて「行けば開く」を促す。
-      // 10m 単位に丸める（GPS が動くので 1m 単位の数字は精度の幻。10m 粒度で十分）。
-      const rounded = Math.round(distance / 10) * 10
-      viewLockDistance.textContent = `ここから約 ${rounded}m 先にメッセージがあります`
+      // 遠い → ロック。残り距離は出さない（#16）。位置は地図のピン＋現在地で分かるし、
+      // 「あと◯m」の計器表示は手紙を辿る体験の情緒を壊す。状態（まだ・ここに在る）だけ静かに見せる。
       viewLocked.hidden = false
     }
   }
@@ -292,7 +287,8 @@ let myLocationMarker = null
 let myLocation = null
 
 // 取得成功: 緯度経度を受け取り、現在地マーカーを置く（or 移動）。
-// 既存ピン（デフォルトの雫アイコン）と一目で区別するため circleMarker（青い丸）を使う。
+// メッセージピン（#16 で墨の点 divIcon = .pin-marker に刷新）と一目で区別するため、
+// 現在地は色相を変えた circleMarker（青い丸）にする。
 // circleMarker の色・半径は JS 内で完結する（CSS 不要）ので main.js（ロジック側）に収まる。
 function showMyLocation(position) {
   // 緯度経度は position.coords に入る。Leaflet は [lat, lng] 順なので並べ替えて使う。

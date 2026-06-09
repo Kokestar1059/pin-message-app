@@ -13,22 +13,22 @@
     <div id="post-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="post-modal-title">
       <div class="modal__overlay"></div>
       <div class="modal__card" role="document">
-        <h2 id="post-modal-title" class="modal__title">ここにメッセージを置く</h2>
-        <p class="modal__lead">この場所に行った人だけが開けるひとことを残せます。</p>
+        <h2 id="post-modal-title" class="modal__title">ここに置く</h2>
+        <p class="modal__lead">この場所に行った人だけが開けるひとこと。</p>
 
         <div class="field">
           <label class="field__label" for="post-name">なまえ</label>
-          <input id="post-name" class="field__input" type="text" placeholder="例：こうき" autocomplete="off" />
+          <input id="post-name" class="field__input" type="text" placeholder="こうき" autocomplete="off" />
         </div>
 
         <div class="field">
-          <label class="field__label" for="post-text">メッセージ</label>
-          <textarea id="post-text" class="field__input field__textarea" rows="3" placeholder="ここでひとこと…"></textarea>
+          <label class="field__label" for="post-text">ことば</label>
+          <textarea id="post-text" class="field__input field__textarea" rows="3" placeholder="ここでひとこと"></textarea>
         </div>
 
         <div class="modal__actions">
-          <button id="post-cancel" class="btn btn--ghost" type="button">キャンセル</button>
-          <button id="post-submit" class="btn btn--primary" type="button">ここに置く</button>
+          <button id="post-cancel" class="btn btn--ghost" type="button">やめる</button>
+          <button id="post-submit" class="btn btn--primary" type="button">置く</button>
         </div>
       </div>
     </div>
@@ -40,38 +40,37 @@
     <div id="view-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="view-modal-title">
       <div class="modal__overlay"></div>
       <div class="modal__card" role="document">
-        <!-- 誰が置いたか。3状態のどれでも常に見せるヘッダー的扱い。 -->
-        <p class="view__from">
-          <span class="view__from-pin" aria-hidden="true">📍</span>
+        <!-- 誰が置いたか。3状態のどれでも常に見せるヘッダー的扱い。
+             view-name は main.js が textContent を入れる空のガワ。 -->
+        <p id="view-modal-title" class="view__from">
           <span id="view-name" class="view__name"></span>
-          <span class="view__from-suffix">さんのメッセージ</span>
+          <span class="view__from-suffix">より</span>
         </p>
 
         <!-- 状態1：解錠（近い）。本文を読める。 -->
         <div id="view-unlocked" class="view__state" hidden>
-          <h2 id="view-modal-title" class="modal__title">メッセージが開きました</h2>
           <p id="view-text" class="view__text"></p>
         </div>
 
-        <!-- 状態2：ロック（遠い）。隠すが拒絶しない。行けば開けるトーン。 -->
+        <!-- 状態2：ロック（遠い）。隠すが拒絶しない。行けば開けるトーン。
+             印は絵文字をやめ、CSS で描く細い線の輪（墨の輪）にする。 -->
         <div id="view-locked" class="view__state view__locked" hidden>
-          <div class="view__lock-icon" aria-hidden="true">🔒</div>
-          <h2 class="modal__title view__lock-title">まだ開けられません</h2>
-          <p class="modal__lead">この場所に行くと、メッセージのロックが外れます。</p>
-          <p id="view-lock-distance" class="view__lock-distance"></p>
+          <span class="view__mark view__mark--locked" aria-hidden="true"></span>
+          <h2 class="modal__title view__heading">ことばが置かれています</h2>
+          <p class="modal__lead">そばまで来ると、ひらきます。</p>
         </div>
 
         <!-- 状態3：現在地が未取得。案内文（静的）。 -->
         <div id="view-nolocation" class="view__state view__nolocation" hidden>
-          <div class="view__lock-icon" aria-hidden="true">📡</div>
-          <h2 class="modal__title">現在地を確認中です</h2>
+          <span class="view__mark view__mark--searching" aria-hidden="true"></span>
+          <h2 class="modal__title view__heading">現在地をさがしています</h2>
           <p class="modal__lead">
-            位置情報の許可を確認してください。現在地が分かると、近くのメッセージを開けるようになります。
+            位置情報をオンにすると、近くのことばをひらけます。
           </p>
         </div>
 
         <div class="modal__actions">
-          <button id="view-close" class="btn btn--primary" type="button">閉じる</button>
+          <button id="view-close" class="btn btn--primary" type="button">とじる</button>
         </div>
       </div>
     </div>

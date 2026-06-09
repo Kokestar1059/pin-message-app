@@ -1,3 +1,28 @@
+/* =========================================================
+   ピンメッセージ — 視覚層（ui-designer 所有）
+   方針: 原研哉風ミニマル。余白・静けさ・無彩色〜生成りの紙。
+   - 配色は墨（ink）とオフホワイト。アクセントは低彩度に最小限。
+   - 装飾（影・角丸・枠・帯）は淡く細く。絵文字は使わず CSS で静かな印を描く。
+   - 受信者は屋外でスマホ。直射日光下でも読めるコントラストを土台に保つ。
+   ========================================================= */
+
+/* 共有トークン。色や角丸を一箇所に集約して「静けさ」を一貫させる。 */
+:root {
+  --ink: #1c1b18; /* 主たる文字（墨に近い、ほぼ黒だが無彩色寄り） */
+  --ink-soft: #4a4843; /* 副次テキスト */
+  --ink-muted: #8c887f; /* 補助・プレースホルダ */
+  --paper: #fbfaf7; /* 生成りの紙。カード背景 */
+  --paper-sunken: #f4f2ec; /* 入力欄など一段沈んだ面 */
+  --line: #e2ded5; /* 細いヘアライン */
+  --line-strong: #cfc9bd; /* 入力枠など少し見せる線 */
+  --accent: #6b7a6e; /* 低彩度の緑みグレー。フォーカス等のごく淡いアクセント */
+  --pin: #bf5a3c; /* メッセージピン。墨だと険しいので、紙に映える朱（低彩度の朱赤＝印泥/落款の色）。
+                     現在地の青丸と暖色↔寒色で対比し識別しやすい。将来 #31/#32 で「自分／他人」を
+                     分けるときは、ここを基準色にして2色目を足す。 */
+  --radius: 4px; /* 角丸は最小限。紙の四隅の静けさ */
+  --shadow: 0 6px 24px rgba(28, 27, 24, 0.1); /* 影は淡く短く */
+}
+
 * {
   margin: 0;
   box-sizing: border-box;
@@ -5,6 +30,7 @@
 
 body {
   font-family: system-ui, sans-serif;
+  color: var(--ink);
 }
 
 /* Leaflet は #map の高さを CSS から読んで地図を描く。高さ 0 だと地図が見えない（定番の落とし穴）。
@@ -18,70 +44,135 @@ body {
   height: 100vh;
 }
 
+/* ベースマップを 70% グレー化して彩度を落とす。色の主役をピン（朱）と現在地（青）に譲り、
+   両者を識別しやすくする狙い。フィルタは .leaflet-tile-pane（タイル層）だけに掛けるので、
+   別ペインのマーカー（marker-pane）と現在地の circleMarker（overlay-pane）は色を保つ。 */
+.leaflet-tile-pane {
+  filter: grayscale(0.7);
+}
+
 /* =========================================================
-   投稿フォームのモーダル（見た目だけ）
+   メッセージピン（.pin-marker）— main.js の L.divIcon が付与する className
+   - 18×18px の箱が座標中心に置かれる前提（iconAnchor:[9,9]）。箱の中で小さく描く。
+   - 「紙に落ちた墨の点」。現在地マーカー（青い circleMarker）と色で一目で区別する。
+   - hover/active は控えめに反応させる程度（派手にしない）。
+   ========================================================= */
+/* Leaflet は要素に `leaflet-marker-icon pin-marker` を付与する。leaflet.css の
+   `.leaflet-marker-icon { display:block }` と `.pin-marker { display:flex }` は同特異度で、
+   読み込み順（style.css → leaflet.css）の都合で block が後勝ちしてしまう。block だと
+   ::before が inline 扱いになり width/height が無効化されて墨の点が消える。そこで
+   `.leaflet-marker-icon` を併記して特異度を上げ、flex を確実に勝たせる。
+   箱（18×18）の中央に小さな墨の点を置く。点自体は箱より小さくして余白を持たせる。 */
+.leaflet-marker-icon.pin-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.pin-marker::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--pin);
+  /* にじみ（halo）。紙に染みた朱のように、輪郭の外へごく淡く広げる。 */
+  box-shadow: 0 0 0 3px rgba(191, 90, 60, 0.16);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* hover/active で軽く息づく程度。屋外タップでの手応えも兼ねる。 */
+.pin-marker:hover::before {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 4px rgba(191, 90, 60, 0.22);
+}
+
+.pin-marker:active::before {
+  transform: scale(0.96);
+}
+
+/* 投稿前の仮ピン（下書き）。まだ「置いていない」ので、輪郭だけの薄い墨にして
+   保存済みの実ピン（塗りの墨）と見分ける。塗らない＝確定していない、の含み。 */
+.pin-marker--draft::before {
+  background: transparent;
+  border: 1.5px solid var(--pin);
+  box-shadow: none;
+  opacity: 0.7;
+}
+
+/* =========================================================
+   モーダル共通（投稿・閲覧で .modal 系を共有）
    - 中央カード + 半透明オーバーレイ。地図の上に重なる。
    - Leaflet のコントロール（z-index 400〜1000 帯）より確実に上へ。
    - モバイル現地利用なので、タップ領域・文字サイズ・コントラストを優先。
    ========================================================= */
-#post-modal.modal {
+.modal {
   position: fixed;
   inset: 0;
   z-index: 2000; /* Leaflet コントロールより上 */
   display: grid;
   place-items: center;
-  padding: 16px;
+  padding: 20px;
 }
 
-/* hidden 属性が付いている間は確実に隠す（display:grid に勝たせる） */
-#post-modal[hidden] {
+/* hidden 属性が付いている間は確実に隠す（display:grid に勝たせる）。
+   main.js は post-modal / view-modal の hidden を付け外しして開閉する。 */
+#post-modal[hidden],
+#view-modal[hidden] {
   display: none;
 }
 
 .modal__overlay {
   position: absolute;
   inset: 0;
-  background: rgba(20, 24, 31, 0.55);
-  backdrop-filter: blur(2px);
+  /* 墨を一枚かけたような静かな覆い。彩度を持たせない。 */
+  background: rgba(28, 27, 24, 0.42);
+  backdrop-filter: blur(1.5px);
 }
 
 .modal__card {
   position: relative; /* オーバーレイより前面に */
   width: 100%;
-  max-width: 420px;
-  background: #ffffff;
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 12px 32px rgba(20, 24, 31, 0.28);
+  max-width: 400px;
+  background: var(--paper);
+  border-radius: var(--radius);
+  /* 余白をたっぷり取り、要素を詰め込まない。 */
+  padding: 32px 28px;
+  box-shadow: var(--shadow);
   /* 小さい画面で内容が増えてもスクロールできるように */
-  max-height: calc(100vh - 32px);
+  max-height: calc(100vh - 40px);
   overflow-y: auto;
 }
 
+/* 見出しは主張させすぎない。標準ウェイト・ゆったりした字間。 */
 .modal__title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: #1c2530;
-  line-height: 1.4;
+  font-size: 1.15rem;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.5;
+  letter-spacing: 0.04em;
 }
 
 .modal__lead {
-  margin-top: 6px;
-  font-size: 0.95rem;
-  color: #5b6573;
-  line-height: 1.6;
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  line-height: 1.8;
+  letter-spacing: 0.02em;
 }
 
+/* --- 入力フィールド --- */
 .field {
-  margin-top: 18px;
+  margin-top: 24px;
 }
 
 .field__label {
   display: block;
-  margin-bottom: 6px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #2b3441;
+  margin-bottom: 8px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  letter-spacing: 0.06em;
 }
 
 .field__input {
@@ -89,48 +180,53 @@ body {
   width: 100%;
   font-family: inherit;
   font-size: 1rem; /* 16px：iOS のズーム発火を防ぐ */
-  color: #1c2530;
-  background: #f7f8fa;
-  border: 1px solid #d3d8e0;
-  border-radius: 10px;
+  color: var(--ink);
+  background: var(--paper-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
   padding: 12px 14px;
-  line-height: 1.5;
+  line-height: 1.6;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .field__input::placeholder {
-  color: #9aa3b0;
+  color: var(--ink-muted);
 }
 
+/* フォーカスは明るい色で囲わず、低彩度のアクセントを淡く添えるだけ。
+   アクセシビリティのため可視のフォーカスは保つ（淡くてもコントラストは確保）。 */
 .field__input:focus {
   outline: none;
   background: #ffffff;
-  border-color: #4a7bd0;
-  box-shadow: 0 0 0 3px rgba(74, 123, 208, 0.22);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(107, 122, 110, 0.18);
 }
 
 .field__textarea {
   resize: vertical;
-  min-height: 84px;
+  min-height: 88px;
 }
 
+/* --- アクション（ボタン群） --- */
 .modal__actions {
   display: flex;
   gap: 10px;
-  margin-top: 24px;
+  margin-top: 28px;
 }
 
 .btn {
   flex: 1;
   font-family: inherit;
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   /* 高さ 48px 相当：屋外でも押しやすいタップ領域 */
-  padding: 13px 16px;
-  border-radius: 10px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    transform 0.05s ease;
 }
 
 .btn:active {
@@ -138,80 +234,76 @@ body {
 }
 
 .btn:focus-visible {
-  outline: 2px solid #4a7bd0;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
+/* 主ボタンは墨の塊。色で主張せず、濃淡だけで一次行動を示す。 */
 .btn--primary {
-  background: #2f6bd4;
-  color: #ffffff;
+  background: var(--ink);
+  color: var(--paper);
 }
 
 .btn--primary:hover {
-  background: #2a5fbd;
+  background: #000000;
 }
 
+/* 副ボタンは紙のまま、細い線で輪郭だけ。 */
 .btn--ghost {
-  background: #ffffff;
-  color: #475061;
-  border-color: #d3d8e0;
+  background: transparent;
+  color: var(--ink-soft);
+  border-color: var(--line-strong);
 }
 
 .btn--ghost:hover {
-  background: #f1f3f6;
+  background: var(--paper-sunken);
 }
 
 /* =========================================================
-   閲覧モーダル（見た目だけ）
-   - 投稿モーダルと同じ .modal 系を再利用。位置・z-index・[hidden] 打ち消しだけ揃える。
+   閲覧モーダル固有
    - 中身は main.js が「解錠 / ロック / 現在地なし」の3状態を出し分ける。
+   - view-unlocked / view-locked / view-nolocation の hidden を main.js が付け外しする。
    ========================================================= */
-#view-modal.modal {
-  position: fixed;
-  inset: 0;
-  z-index: 2000; /* #post-modal と同じ帯。Leaflet コントロールより上 */
-  display: grid;
-  place-items: center;
-  padding: 16px;
+
+/* 投稿者ヘッダー。どの状態でも常に見える「誰から」の静かな一行。 */
+.view__from {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  line-height: 1.6;
+  letter-spacing: 0.04em;
 }
 
-/* hidden の間は確実に隠す（display:grid に勝たせる。#post-modal と同様） */
-#view-modal[hidden] {
+/* 名前だけは墨で少し前へ。textContent は main.js が入れる。 */
+.view__name {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+/* 3状態セクションは hidden の間は確実に隠す（取り違え防止）。 */
+#view-unlocked[hidden],
+#view-locked[hidden],
+#view-nolocation[hidden] {
   display: none;
 }
 
-/* 投稿者ヘッダー。どの状態でも常に見える「誰から」の行。 */
-.view__from {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  font-size: 0.95rem;
-  color: #5b6573;
-  line-height: 1.5;
-}
-
-.view__from-pin {
-  font-size: 1.1rem;
-}
-
-.view__name {
-  font-weight: 700;
-  color: #1c2530;
-}
-
-/* 各状態セクションは投稿者ヘッダーの下に少し間を空けて並ぶ */
+/* 各状態セクションは投稿者ヘッダーの下に間を空けて並ぶ。 */
 .view__state {
-  margin-top: 16px;
+  margin-top: 20px;
+}
+
+/* 状態見出し。タイトルを大きく主張させない。 */
+.view__heading {
+  font-size: 1.05rem;
 }
 
 /* --- 状態1：解錠（近い） --- */
-/* 本文。読ませるのが主役なので大きめ・行間ゆったり・改行を保持。 */
+/* 本文。読ませるのが主役。墨で、行間ゆったり、改行を保持。 */
 .view__text {
-  margin-top: 12px;
-  font-size: 1.15rem;
-  color: #1c2530;
-  line-height: 1.7;
+  margin-top: 16px;
+  font-size: 1.1rem;
+  color: var(--ink);
+  line-height: 1.9;
+  letter-spacing: 0.02em;
   white-space: pre-wrap; /* 入力時の改行を尊重 */
   word-break: break-word;
 }
@@ -222,28 +314,50 @@ body {
   text-align: center;
 }
 
-/* 鍵・電波などの大アイコン。拒絶感より「あと一歩」の余白感を出す。 */
-.view__lock-icon {
-  font-size: 3rem;
-  line-height: 1;
-  margin-bottom: 12px;
+/* 絵文字をやめ、CSS で描く静かな印。鍵＝閉じた輪、現在地＝淡い点。
+   拒絶感より「あと一歩」の余白を出すため、細い線で軽く。 */
+.view__mark {
+  display: block;
+  width: 28px;
+  height: 28px;
+  margin: 4px auto 16px;
+  border-radius: 50%;
 }
 
-/* 距離目安。前向きトーンで目立たせる淡い帯。テキストは main.js が差し込む。 */
-.view__lock-distance {
-  margin-top: 14px;
-  display: inline-block;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #2a5fbd;
-  background: #eaf1fc;
-  border: 1px solid #cfe0fa;
-  border-radius: 10px;
-  padding: 10px 16px;
-  line-height: 1.5;
+/* ロック：細い墨の輪（閉じてはいるが、強く拒まない）。 */
+.view__mark--locked {
+  border: 1.5px solid var(--ink-soft);
 }
 
-/* 距離が未確定（空文字）のときは帯ごと隠して間延びを防ぐ */
-.view__lock-distance:empty {
-  display: none;
+/* 現在地確認中：芯のある点。ごく淡く息づかせ「探している」気配を出す。 */
+.view__mark--searching {
+  border: 1.5px solid var(--line-strong);
+  position: relative;
+}
+
+.view__mark--searching::after {
+  content: "";
+  position: absolute;
+  inset: 9px; /* 中心に小さな点 */
+  border-radius: 50%;
+  background: var(--ink-muted);
+  animation: searching-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes searching-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+/* アニメーションを好まない設定では息づきを止める（アクセシビリティ配慮）。 */
+@media (prefers-reduced-motion: reduce) {
+  .view__mark--searching::after {
+    animation: none;
+    opacity: 0.7;
+  }
 }
