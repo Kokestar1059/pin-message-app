@@ -8,6 +8,25 @@
   <body>
     <div id="map"></div>
 
+    <!-- 認証ゲート。未ログインのとき地図の代わりに見せる全画面オーバーレイ。
+         既定で表示する（地図のチラ見えを防ぐため hidden は付けない）。
+         ログイン成立後に main.js が hidden を付けて隠す。
+         #login-google の onclick 配線は main.js 側。視覚層はガワまで。 -->
+    <div id="auth-gate" role="dialog" aria-modal="true" aria-labelledby="auth-gate-title">
+      <div class="auth__card">
+        <span class="auth__mark" aria-hidden="true"></span>
+        <h1 id="auth-gate-title" class="auth__title">ピンメッセージ</h1>
+        <p class="auth__lead">行った場所に、ことばを置く。</p>
+        <button id="login-google" class="btn btn--primary auth__login" type="button">
+          Google で入る
+        </button>
+      </div>
+    </div>
+
+    <!-- ログアウト。地図の隅に控えめに置くテキストボタン。
+         既定は hidden（ログイン後に main.js が hidden を外して見せる）。 -->
+    <button id="logout" class="logout" type="button" hidden>出る</button>
+
     <!-- 投稿フォームのモーダル。既定は hidden 属性で非表示。
          ロジック側（main.js）が hidden を付け外しして開閉する。視覚層はここまで。 -->
     <div id="post-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="post-modal-title">
