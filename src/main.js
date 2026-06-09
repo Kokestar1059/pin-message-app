@@ -8,7 +8,7 @@ import { supabase } from './supabase.js'
 // #14 のハバーサイン距離関数。#15 の近接判定（現在地 ↔ ピン）で使う。
 import { distanceMeters } from './distance.js'
 
-// 初期表示の中心とズーム。2人で使う PoC なので暫定で日本（東京駅）。現地で調整する前提。
+// 初期表示の中心とズーム。少人数で使う PoC なので暫定で日本（東京駅）。現地で調整する前提。
 const INITIAL_CENTER = [35.681236, 139.767125]
 const INITIAL_ZOOM = 13
 
