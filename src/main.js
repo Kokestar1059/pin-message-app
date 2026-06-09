@@ -253,7 +253,11 @@ async function loadMessages() {
 // 古い購読が残ったまま新しい購読が積み増すのを防ぐため。下の import.meta.hot で後始末する。
 // HMR 後始末（下）でも参照するのでモジュール変数。購読開始は startApp（ログイン後）からのみ。
 let messagesChannel = null
-function subscribeMessages() {
+function subscribeMessages(session) {
+  // RLS（authenticated 限定）下では、購読の前に Realtime ソケットへ認証トークンを渡す必要がある。
+  // 渡さないとソケットが匿名のまま繋がり、新規 INSERT イベントが RLS で弾かれて届かない
+  //（「ログイン直後の最初の数件が出ないことがある」レースの正体）。session のトークンで確実に authenticated 化する。
+  supabase.realtime.setAuth(session.access_token)
   messagesChannel = supabase
     .channel('messages-inserts')
     .on(
@@ -372,11 +376,11 @@ const logoutBtn = document.getElementById('logout')
 // アプリ本体（取得・購読・現在地）の起動。onAuthChange は初期セッションも流すうえ
 // ログインのたびに発火しうるので、二重に購読/取得しないよう1回だけに守る。
 let appStarted = false
-function startApp() {
+function startApp(session) {
   if (appStarted) return
   appStarted = true
   loadMessages() // 保存済みピンを描画
-  subscribeMessages() // 新規ピンの Realtime 反映
+  subscribeMessages(session) // 新規ピンの Realtime 反映（session は Realtime 認証に使う）
   startGeolocation() // 現在地の追従（ここで初めて位置情報の許可を求める）
 }
 
@@ -401,7 +405,7 @@ logoutBtn.addEventListener('click', signOut)
 const authSubscription = onAuthChange((session) => {
   if (session) {
     showApp()
-    startApp()
+    startApp(session)
   } else if (appStarted) {
     window.location.reload()
   } else {
