@@ -1,0 +1,64 @@
+# main に push されたら Vite を build して GitHub Pages へデプロイする。
+# 公式 Vite テンプレート（configure-pages → upload-pages-artifact → deploy-pages）に
+# Supabase の env を build ステップで Secrets から注入する形。
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # 手動実行も可能にする（Actions タブから）
+
+# Pages デプロイに必要な権限。id-token はデプロイの認証に使う。
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時に複数デプロイが走らないようにする。進行中のものはキャンセルしない
+# （途中のデプロイを中断させないため cancel-in-progress: false）。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        # VITE_ 接頭辞の値はビルド時にバンドルへ埋め込まれる。
+        # publishable キーはクライアントに出る前提（RLS で守る）なので Secrets 経由で渡す。
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
