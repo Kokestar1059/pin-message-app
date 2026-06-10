@@ -92,10 +92,14 @@
   - 対象テーブルを **Realtime publication に追加**（ダッシュボードで有効化）する。**INSERT だけでなく
     UPDATE / DELETE も購読する**（編集/削除を相手の画面に反映するため。#33/#34）。DELETE の payload は
     既定で `payload.old` に主キーのみ → `payload.old.id` でマーカーを引く。
-  - **RLS をオーナーベースに**: select は全員可（ピンは常に見える）／insert・update・delete は
-    `auth.uid() = user_id` の本人のみ（§下の SQL）。**所有はサーバ側で強制**される。
+  - **RLS をオーナーベースに**: select は**ログイン済み(authenticated)のみ**（匿名は読めない＝実質プライベート。
+    ログインユーザーには全ピン見える）／insert・update・delete は `auth.uid() = user_id` の本人のみ（§下の SQL）。
+    **所有はサーバ側で強制**される。
   - **Realtime は RLS に従う**。SELECT ポリシーが届けたい行をカバーしないとリアルタイムが飛んでこない
     （「INSERT は成功するのに相手の画面に出ない」症状の主因）。
+  - **RLS を `authenticated` 限定にしたら、購読の前に `supabase.realtime.setAuth(session.access_token)` が必須**。
+    忘れるとソケットが匿名のまま繋がり、新規イベントが RLS で弾かれて「ログイン直後の最初の数件が届かない」
+    レースになる（#31）。`setAuth` → `channel(...).subscribe()` の順で確実に authenticated 化する。
 - **Supabase キー**: **publishable キー（`sb_publishable_...`）を使う**（レガシー anon キーではなく推奨の新方式。
   権限は anon と同等の低権限）。クライアント生成は env 経由:
   ```js
@@ -109,9 +113,9 @@
 オーナーベース RLS（参考。認証導入後＝#31 の形）:
 ```sql
 alter table messages enable row level security;
--- ピンは常に見える: 読み取りは全員可
-create policy "anyone can read" on messages
-  for select using (true);
+-- 読み取りはログイン済みのみ（匿名は読めない＝実質プライベート）
+create policy "authenticated can read" on messages
+  for select to authenticated using (true);
 -- 投稿・編集・削除は本人のみ（auth.uid() = user_id）
 create policy "owner can insert" on messages
   for insert to authenticated with check (auth.uid() = user_id);
@@ -121,7 +125,7 @@ create policy "owner can delete" on messages
   for delete to authenticated using (auth.uid() = user_id);
 ```
 > 認証導入前（Phase 6 まで）は anon に SELECT/INSERT を許す緩いポリシーで動かしていた。
-> Phase 7（#31）で上記オーナーベースに移行する。
+> #31 で上記オーナーベース＋読み取り authenticated 限定に移行済み。user_id 列（default auth.uid()）も追加。
 
 ---
 

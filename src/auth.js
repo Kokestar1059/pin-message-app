@@ -31,6 +31,14 @@ export async function signOut() {
   if (error) console.error('[auth] ログアウトに失敗:', error.message)
 }
 
+// ログインユーザーの表示名（Google プロフィール名）を取り出す。
+// OAuth で得たプロフィール情報は session.user.user_metadata に入る。
+// Google は full_name / name を入れるので順に拾い、無ければ email にフォールバック。
+export function displayName(session) {
+  const meta = session.user.user_metadata ?? {}
+  return meta.full_name ?? meta.name ?? session.user.email
+}
+
 // 認証状態を購読する。これ1つで「初回判定」と「以後の変化」を兼ねるのがポイント:
 // onAuthStateChange は登録直後に “現在のセッション” を1回流す（INITIAL_SESSION）。
 // そのうえでログイン成立 / ログアウトのたびにも発火する。
