@@ -8,7 +8,7 @@ import { supabase } from './supabase.js'
 // #14 のハバーサイン距離関数。#15 の近接判定（現在地 ↔ ピン）で使う。
 import { distanceMeters } from './distance.js'
 // #30 認証（Google OAuth）のラッパ。ログイン壁とセッション購読に使う。
-import { signInWithGoogle, signOut, onAuthChange } from './auth.js'
+import { signInWithGoogle, signOut, onAuthChange, displayName } from './auth.js'
 
 // 初期表示の中心とズーム。少人数で使う PoC なので暫定で日本（東京駅）。現地で調整する前提。
 const INITIAL_CENTER = [35.681236, 139.767125]
@@ -76,14 +76,13 @@ function addMarker(row) {
 // 要素を掴み、開閉と後始末のロジックだけを書く。開閉は #post-modal の hidden 属性で行う約束。
 const modal = document.getElementById('post-modal')
 const overlay = modal.querySelector('.modal__overlay')
-const nameInput = document.getElementById('post-name')
 const textInput = document.getElementById('post-text')
 const submitBtn = document.getElementById('post-submit')
 const cancelBtn = document.getElementById('post-cancel')
 
 function openModal() {
   modal.hidden = false
-  nameInput.focus() // すぐ打てるように名前欄へフォーカス
+  textInput.focus() // すぐ打てるように本文欄へフォーカス
 }
 
 function closeModal() {
@@ -102,7 +101,6 @@ function removeTempMarker() {
 function cancelPost() {
   closeModal()
   removeTempMarker()
-  nameInput.value = ''
   textInput.value = ''
 }
 
@@ -134,10 +132,10 @@ submitBtn.addEventListener('click', async () => {
   // 仮ピン無しでこのボタンが押される経路は現状ないが、将来の改修に備えた防御。
   if (!tempMarker) return
 
-  const userName = nameInput.value.trim()
+  // 投稿者名は手入力しない。ログイン中の Google プロフィール名（currentUserName）を使う（§4）。
   const text = textInput.value.trim()
-  // 名前・メッセージが空なら何もしない（最小ガード。UI での明示は #16 で調整）。
-  if (!userName || !text) return
+  // 本文が空なら何もしない（最小ガード）。
+  if (!text) return
 
   // 仮ピンの座標が、これから保存するメッセージの場所になる。
   const { lat, lng } = tempMarker.getLatLng()
@@ -148,7 +146,7 @@ submitBtn.addEventListener('click', async () => {
   // id / created_at は Postgres が自動付与するので渡さない。
   const { error } = await supabase
     .from('messages')
-    .insert({ user_name: userName, text, lat, lng })
+    .insert({ user_name: currentUserName, text, lat, lng })
   submitBtn.disabled = false
 
   if (error) {
@@ -375,10 +373,13 @@ const logoutBtn = document.getElementById('logout')
 
 // アプリ本体（取得・購読・現在地）の起動。onAuthChange は初期セッションも流すうえ
 // ログインのたびに発火しうるので、二重に購読/取得しないよう1回だけに守る。
+// 投稿時に user_name として使う、ログイン中の表示名（Google プロフィール名）。
+let currentUserName = ''
 let appStarted = false
 function startApp(session) {
   if (appStarted) return
   appStarted = true
+  currentUserName = displayName(session) // 投稿者名は手入力ではなくログインユーザーの名前
   loadMessages() // 保存済みピンを描画
   subscribeMessages(session) // 新規ピンの Realtime 反映（session は Realtime 認証に使う）
   startGeolocation() // 現在地の追従（ここで初めて位置情報の許可を求める）
